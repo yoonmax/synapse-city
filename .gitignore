@@ -1,0 +1,9 @@
+# Build output
+backend/target/
+frontend/dist/
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
+# Local tooling
+.claude/
+.DS_Store
+*.log

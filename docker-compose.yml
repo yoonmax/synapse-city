@@ -1,0 +1,13 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      SYNAPSE_ALLOWED_ORIGINS: "*"
+    ports:
+      - "8080:8080"
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
