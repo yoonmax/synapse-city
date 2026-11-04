@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useStore } from '../state/store'
+import { RUNS_IN_BROWSER } from '../network/client'
 import { renderStats } from '../city/renderer/PerfProbe'
 import { Button, Segmented, Toggle, fmt } from './controls/primitives'
 import { SPEEDS } from './controls/LeftPanel'
@@ -30,7 +31,7 @@ export function TopBar() {
   const leftOpen = useStore((s) => s.leftOpen)
   const rightOpen = useStore((s) => s.rightOpen)
   const [settings, setSettings] = useState(false)
-  const status = connection !== 'open' ? (connection === 'connecting' ? 'Connecting' : 'Offline') : sim?.running ? 'Live' : 'Paused'
+  const status = connection !== 'open' ? (connection === 'connecting' ? 'Connecting' : 'Offline') : !sim ? 'Starting' : sim.running ? 'Live' : 'Paused'
   const statusTone = connection !== 'open' ? 'bg-danger' : sim?.running ? 'bg-go' : 'bg-sodium'
   return (
     <header className="panel pointer-events-auto relative flex h-12 items-center gap-4 rounded-[10px] px-3 sm:px-4">
@@ -67,6 +68,24 @@ export function TopBar() {
   )
 }
 
+/** Downloads the sampled time series the client already holds. */
+function exportMetrics() {
+  const rows = useStore.getState().series.map((m) => [
+    m.time.toFixed(1), m.active, m.avgSpeed.toFixed(3), m.congestionIndex.toFixed(2), m.queued,
+    m.throughputPerMin.toFixed(2), m.avgTripTime.toFixed(2), m.avgTripWait.toFixed(2), m.completed, m.travelTimeIndex.toFixed(3),
+  ].join(','))
+  const csv = [
+    '# Synapse City simulated metrics (not real-world traffic data)',
+    'time_s,active,avg_speed_mps,congestion_index,queued,throughput_per_min,avg_trip_s,avg_trip_wait_s,completed,travel_time_index',
+    ...rows,
+  ].join('\n')
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+  a.download = 'synapse-city-metrics.csv'
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
 function SettingsPopover({ onClose }: { onClose: () => void }) {
   const quality = useStore((s) => s.quality)
   const perfOpen = useStore((s) => s.perfOpen)
@@ -84,9 +103,12 @@ function SettingsPopover({ onClose }: { onClose: () => void }) {
       <div className="mt-3">
         <Toggle label="Performance overlay" kbd="P" checked={perfOpen} onChange={(v) => set({ perfOpen: v })} />
         <Button tone="ghost" className="mt-2 w-full" onClick={() => { set({ helpOpen: true }); onClose() }}>Keyboard shortcuts</Button>
-        <a className="mt-1 block rounded-md px-3 py-2 text-center text-[12.5px] text-fog hover:bg-white/[0.04] hover:text-paper" href="/api/metrics/series.csv">
-          Export metrics (CSV)
-        </a>
+        <Button tone="ghost" className="mt-1 w-full" onClick={exportMetrics}>Export metrics (CSV)</Button>
+        {RUNS_IN_BROWSER && (
+          <p className="mt-3 border-t border-hair pt-3 text-[11.5px] leading-snug text-dim">
+            This page runs the Java simulation inside your browser, compiled to JavaScript. Your simulation is private and nothing is sent to a server.
+          </p>
+        )}
       </div>
     </div>
   )

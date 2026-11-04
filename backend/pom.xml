@@ -38,6 +38,80 @@
         </dependency>
     </dependencies>
 
+    <profiles>
+        <!--
+          Compiles the simulation to JavaScript with TeaVM for the static browser build:
+          mvn -Pbrowser process-classes
+          The server build does not include these dependencies or this entry point.
+        -->
+        <profile>
+            <id>browser</id>
+            <properties>
+                <teavm.version>0.16.0</teavm.version>
+            </properties>
+            <dependencies>
+                <dependency>
+                    <groupId>org.teavm</groupId>
+                    <artifactId>teavm-classlib</artifactId>
+                    <version>${teavm.version}</version>
+                </dependency>
+                <dependency>
+                    <groupId>org.teavm</groupId>
+                    <artifactId>teavm-jso</artifactId>
+                    <version>${teavm.version}</version>
+                </dependency>
+                <dependency>
+                    <groupId>org.teavm</groupId>
+                    <artifactId>teavm-jso-apis</artifactId>
+                    <version>${teavm.version}</version>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>browser-sources</id>
+                                <phase>generate-sources</phase>
+                                <goals>
+                                    <goal>add-source</goal>
+                                </goals>
+                                <configuration>
+                                    <sources>
+                                        <source>${project.basedir}/src/browser/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.teavm</groupId>
+                        <artifactId>teavm-maven-plugin</artifactId>
+                        <version>${teavm.version}</version>
+                        <executions>
+                            <execution>
+                                <phase>process-classes</phase>
+                                <goals>
+                                    <goal>compile</goal>
+                                </goals>
+                                <configuration>
+                                    <mainClass>com.synapsecity.browser.BrowserMain</mainClass>
+                                    <targetDirectory>${project.build.directory}/browser</targetDirectory>
+                                    <targetFileName>synapse-sim.js</targetFileName>
+                                    <targetType>JAVASCRIPT</targetType>
+                                    <minifying>true</minifying>
+                                    <optimizationLevel>ADVANCED</optimizationLevel>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
     <build>
         <plugins>
             <plugin>

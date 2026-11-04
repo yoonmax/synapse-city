@@ -44,7 +44,7 @@ public final class Intersection {
     private final List<List<Approach>> phases = new ArrayList<>();
     private final Map<Long, Movement> movementCache = new LinkedHashMap<>();
     private final List<Movement> activeMovements = new ArrayList<>();
-    private final List<Vehicle> occupants = new ArrayList<>();
+    private final List<Reservation> reservations = new ArrayList<>();
     private final List<Claim> claims = new ArrayList<>();
 
     private SignalController controller;
@@ -63,6 +63,10 @@ public final class Intersection {
     private long preemptions;
 
     private record Claim(Vehicle vehicle, Movement movement, double since) {
+    }
+
+    /** A vehicle's right to one path through this box, held from commitment until its rear clears. */
+    public record Reservation(Vehicle vehicle, Movement movement) {
     }
 
     public Intersection(RoadNode node) {
@@ -311,8 +315,8 @@ public final class Intersection {
                 }
             }
         }
-        for (Vehicle o : occupants) {
-            if (o != v && o.movement() != null && m.conflictsWith(o.movement())) {
+        for (Reservation r : reservations) {
+            if (r.vehicle() != v && m.conflictsWith(r.movement())) {
                 return EntryDecision.YIELD_CONFLICT;
             }
         }
@@ -338,9 +342,10 @@ public final class Intersection {
 
     private double reservedLength(RoadSegment out, int lane) {
         double total = 0;
-        for (Vehicle o : occupants) {
-            Movement m = o.movement();
-            if (m != null && m.out() == out && m.outLane() == lane && o.segment() != out) {
+        for (Reservation r : reservations) {
+            Movement m = r.movement();
+            Vehicle o = r.vehicle();
+            if (m.out() == out && m.outLane() == lane && o.segment() != out) {
                 total += o.length() + o.type().minGap();
             }
         }
@@ -348,7 +353,7 @@ public final class Intersection {
     }
 
     public void commit(Vehicle v, Movement m) {
-        occupants.add(v);
+        reservations.add(new Reservation(v, m));
         v.assignMovement(this, m);
         removeClaim(v);
         entries++;
@@ -356,7 +361,7 @@ public final class Intersection {
 
     /** Called once the vehicle's rear has fully left the box. */
     public void release(Vehicle v) {
-        occupants.remove(v);
+        reservations.removeIf(r -> r.vehicle() == v);
     }
 
     /** Unsignalised junctions: register that {@code v} is stopped at the line waiting for {@code m}. */
@@ -379,7 +384,7 @@ public final class Intersection {
 
     /** Called by the engine when a vehicle is removed from the simulation. */
     public void forget(Vehicle v) {
-        occupants.remove(v);
+        reservations.removeIf(r -> r.vehicle() == v);
         removeClaim(v);
     }
 
@@ -489,8 +494,8 @@ public final class Intersection {
         return preemptVehicle;
     }
 
-    public List<Vehicle> occupants() {
-        return Collections.unmodifiableList(occupants);
+    public List<Reservation> reservations() {
+        return Collections.unmodifiableList(reservations);
     }
 
     public List<Movement> activeMovements() {

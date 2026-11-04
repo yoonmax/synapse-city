@@ -1,5 +1,6 @@
 package com.synapsecity.api;
 
+import com.synapsecity.session.ClientView;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.socket.BinaryMessage;
@@ -10,8 +11,8 @@ import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorato
 import java.io.IOException;
 
 /**
- * One connected client: a send-buffered WebSocket plus per-client view state (selection,
- * inspection, event and series cursors) and a token-bucket command rate limit.
+ * One connected client: a send-buffered WebSocket, its view state and a token-bucket command
+ * rate limit.
  */
 public final class ClientSession {
 
@@ -20,11 +21,8 @@ public final class ClientSession {
     private static final double REFILL_PER_SECOND = 20;
 
     private final WebSocketSession socket;
-    // View state, only touched on the sim thread.
-    Integer selectedVehicle;
-    Integer inspectedNode;
-    long lastEventId;
-    double lastSampleTime = -1;
+    /** Only touched on the sim thread. */
+    final ClientView view = new ClientView();
 
     private double tokens = BUCKET_CAPACITY;
     private long lastRefill = System.nanoTime();
@@ -52,10 +50,6 @@ public final class ClientSession {
     }
 
     void send(String json) {
-        sendRaw(json);
-    }
-
-    void sendRaw(String json) {
         if (json == null || !socket.isOpen()) {
             return;
         }

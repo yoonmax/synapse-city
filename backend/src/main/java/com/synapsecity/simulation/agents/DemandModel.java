@@ -5,7 +5,7 @@ import com.synapsecity.simulation.roads.RoadSegment;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.SplittableRandom;
+import com.synapsecity.simulation.core.SeededRandom;
 
 /**
  * Samples trip origins and destinations from road-length-weighted distributions shaped by a
@@ -68,7 +68,7 @@ public final class DemandModel {
         return c;
     }
 
-    private RoadSegment sample(double[] cdf, SplittableRandom rng) {
+    private RoadSegment sample(double[] cdf, SeededRandom rng) {
         if (cdf.length == 0) {
             return null;
         }
@@ -92,11 +92,11 @@ public final class DemandModel {
         return null;
     }
 
-    public RoadSegment sampleOrigin(SplittableRandom rng) {
+    public RoadSegment sampleOrigin(SeededRandom rng) {
         return sample(originCdf, rng);
     }
 
-    public RoadSegment sampleDestination(SplittableRandom rng) {
+    public RoadSegment sampleDestination(SeededRandom rng) {
         return sample(destinationCdf, rng);
     }
 

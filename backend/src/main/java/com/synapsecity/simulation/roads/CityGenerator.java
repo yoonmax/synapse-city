@@ -8,11 +8,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.SplittableRandom;
+import com.synapsecity.simulation.core.SeededRandom;
 
 /**
  * Seeded procedural city generator. The same (seed, layout) pair always yields an identical
- * city: every random draw comes from one {@link SplittableRandom} consumed in a fixed order,
+ * city: every random draw comes from one {@link SeededRandom} consumed in a fixed order,
  * and all collections are iterated in insertion order.
  *
  * <p>Pipeline: street blueprint for the layout, then carve and prune (no dead ends, single
@@ -34,13 +34,13 @@ public final class CityGenerator {
 
     private final long seed;
     private final CityLayout layout;
-    private final SplittableRandom rng;
+    private final SeededRandom rng;
     private final Blueprint bp = new Blueprint();
 
     private CityGenerator(long seed, CityLayout layout) {
         this.seed = seed;
         this.layout = layout;
-        this.rng = new SplittableRandom(seed * 0x9E3779B97F4A7C15L + layout.ordinal());
+        this.rng = new SeededRandom(seed * 0x9E3779B97F4A7C15L + layout.ordinal());
     }
 
     public static CityModel generate(long seed, CityLayout layout) {
@@ -539,7 +539,7 @@ public final class CityGenerator {
         }
 
         /** Removes a fraction of local streets while keeping every endpoint at degree >= minDegree. */
-        void carveLocalEdges(SplittableRandom rng, double probability, int minDegree) {
+        void carveLocalEdges(SeededRandom rng, double probability, int minDegree) {
             int[] deg = degrees();
             List<int[]> kept = new ArrayList<>();
             for (int[] e : edges) {

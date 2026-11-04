@@ -27,7 +27,7 @@ public class SimulationSocketHandler extends TextWebSocketHandler {
     public SimulationSocketHandler(SimulationService service, ObjectMapper mapper) {
         this.service = service;
         this.mapper = mapper;
-        this.parser = new CommandParser(mapper);
+        this.parser = new CommandParser();
     }
 
     @Override

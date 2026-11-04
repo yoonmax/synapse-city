@@ -123,7 +123,7 @@ public final class Messages {
                               int targetVehicles, String signalMode, String demandProfile, int scriptedSteps) {
     }
 
-    public record LiveSummary(LiveMetrics metrics, PerformanceStats perf) {
+    public record ScenariosMessage(String type, List<ScenarioDto> scenarios) {
     }
 
     public static List<String> buildingStyleNames() {

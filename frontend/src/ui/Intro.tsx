@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import gsap from 'gsap'
 import { useStore } from '../state/store'
 import { introControl } from '../city/renderer/IntroDirector'
+import { RUNS_IN_BROWSER } from '../network/client'
 
 const WORD = 'Synapse City'
 const SKIPPED = typeof location !== 'undefined' && new URLSearchParams(location.search).get('intro') === 'skip'
@@ -32,7 +33,7 @@ export function Intro() {
       </h1>
       <div data-rule className="mt-4 h-px w-[min(420px,70vw)] origin-left bg-gradient-to-r from-transparent via-cyan to-transparent" />
       <p data-sub className="mt-4 text-[13px] text-fog">
-        {connection === 'closed' ? 'Waiting for the Java simulation server on port 8080' : city ? `Initialising ${city.name}` : 'Connecting to the simulation'}
+        {connection === 'closed' ? (RUNS_IN_BROWSER ? 'The simulation could not start in this browser' : 'Waiting for the Java simulation server on port 8080') : city ? `Initialising ${city.name}` : 'Connecting to the simulation'}
       </p>
       {!introDone && city && (
         <button onClick={() => introControl.skip()} className="pointer-events-auto absolute bottom-8 right-8 rounded-md px-3 py-2 text-[12.5px] text-fog ring-1 ring-hair hover:text-paper hover:ring-slate">

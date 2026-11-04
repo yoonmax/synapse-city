@@ -2,7 +2,9 @@
 
 A deterministic urban traffic simulation written in Java, rendered live as a miniature night-time city in the browser.
 
-The Java engine is the only place where anything is decided: it generates the city, routes every vehicle with Dijkstra or A*, runs Intelligent Driver Model car-following, reserves junction space, controls traffic signals with fixed-time or adaptive logic, and records every metric. The React and Three.js client draws what the engine sends over a WebSocket and forwards user commands back to it. The engine runs and tests independently of Spring and of the browser.
+**[Open the live demo](https://yoonmax.github.io/synapse-city/)**. Nothing to install: the Java simulation runs in your browser, and every visitor gets a private city. Best on a desktop browser with WebGL.
+
+The Java engine is the only place where anything is decided: it generates the city, routes every vehicle with Dijkstra or A*, runs Intelligent Driver Model car-following, reserves junction space, controls traffic signals with fixed-time or adaptive logic, and records every metric. The React and Three.js client draws what the engine sends and forwards user commands back to it. The engine runs and tests independently of Spring and of the browser.
 
 ![Overview: control console, live city and network analytics](docs/screenshots/overview.png)
 
@@ -29,7 +31,8 @@ Screenshots are captured from the running application with `scripts/capture-scre
 |---|---|
 | Simulation | Java 21, no framework dependencies (`com.synapsecity.simulation.*`) |
 | Server | Spring Boot 3.5, raw WebSocket (binary + JSON), REST |
-| Tests | JUnit 5, Spring Boot Test (78 tests) |
+| Tests | JUnit 5, Spring Boot Test (89 tests), plus JVM-vs-JavaScript parity checks |
+| Browser build | TeaVM 0.16 compiles the same Java to JavaScript, run in a Web Worker |
 | Client | React 19, TypeScript, Vite 7, Three.js r180, React Three Fiber 9, Drei, postprocessing, GSAP, Tailwind CSS 4, Zustand |
 
 ## Architecture
@@ -47,8 +50,10 @@ Screenshots are captured from the running application with `scripts/capture-scre
 │  simulation/scenarios  presets + scripts, ComparisonRunner, HeadlessRunner   │
 │  simulation/core       SimulationEngine (fixed 0.1 s step), clock, config    │
 │                                                                              │
-│  api/SimulationService   single "sim-loop" thread owns the engine            │
-│  websocket/              command parser + validator, binary frame encoder    │
+│  session/              pacing, commands, messages; shared by both hosts      │
+│  api/SimulationService   server host: one "sim-loop" thread owns the engine  │
+│  browser/BrowserMain     demo host: same session in a Web Worker (TeaVM)     │
+│  websocket/protocol      command parser, wire messages, binary frame encoder │
 └───────────────┬──────────────────────────────────────────▲───────────────────┘
                 │ binary frame ≤20 Hz (vehicles, signals,   │ JSON commands
                 │ congestion) + JSON state 2 Hz + details   │ (validated, rate-limited)
@@ -60,9 +65,17 @@ Screenshots are captured from the running application with `scripts/capture-scre
 └───────────────────────────────────────────────────────────── TypeScript ─────┘
 ```
 
+### Two hosts, one engine
+
+The live demo and the server run the same Java classes. `SimulationSession` holds the logic for pacing the engine, applying commands and building messages, with no threads, networking or server dependencies. `SimulationService` hosts it on the JVM and serves it over a WebSocket. `BrowserMain` hosts it in a Web Worker after TeaVM compiles it to JavaScript. Both send identical messages, so the client has one code path and only the transport differs.
+
+The compiled engine is not an approximation. `scripts/check-browser-parity.sh` runs the same configuration on the JVM and as JavaScript and compares a hash of the complete simulation state (every vehicle's position, speed and state, and all signal timing). All four configurations it covers, across all three layouts and up to 900 vehicles, match exactly after 300 simulated seconds.
+
+Hosting the demo this way costs nothing, never sleeps, and gives each visitor their own simulation. On the server, by contrast, all clients share one.
+
 ### Threading and determinism
 
-Exactly one thread mutates the engine. WebSocket and REST threads only enqueue work; the loop drains the queue between whole steps, advances the engine by however many fixed 0.1 s steps the wall clock and speed multiplier call for (capped per tick), then publishes. The engine never reads the wall clock, all randomness comes from one seeded `SplittableRandom` consumed in a fixed order, and every collection is iterated in id order. Two engines with the same configuration and the same commands at the same ticks produce identical state hashes; the test suite checks this tick by tick. Comparisons run on a separate thread in independent engine instances, so they cannot disturb the live run.
+Exactly one thread mutates the engine. WebSocket and REST threads only enqueue work; the loop drains the queue between whole steps, advances the engine by however many fixed 0.1 s steps the wall clock and speed multiplier call for (capped per tick), then publishes. The engine never reads the wall clock, all randomness comes from one seeded `SplittableRandom` consumed in a fixed order, and every collection is iterated in id order. Two engines with the same configuration and the same commands at the same ticks produce identical state hashes; the test suite checks this tick by tick. On the server, comparisons run on a separate thread in independent engine instances, so they cannot disturb the live run. The browser build has one worker thread, so its live city pauses for a few seconds during a comparison.
 
 ### Wire protocol
 
@@ -124,11 +137,11 @@ It holds at least 7 s of green, holds green if no other phase has demand, ends g
 
 All numbers come from engine state or from recorded trip completions, never synthesised:
 
-- **Congestion index** = 100 · (1 − Σ speed / Σ posted limit) over vehicles on the road. It counts red-light stops and turn slowdowns, so an almost empty signalised grid already scores about 39. The condition bands are calibrated to that: free flow below 45, moderate below 60, heavy below 75, severe above.
+- **Congestion index** = 100 · (1 − Σ speed / Σ posted limit) over vehicles on the road. It counts red-light stops and turn slowdowns, so an almost empty signalised grid already scores about 35. The condition bands are calibrated to that: free flow below 45, moderate below 60, heavy below 75, severe above.
 - **Travel time index** = actual trip time / free-flow trip time, averaged over recent trips.
 - Trip time, time stopped, 90th percentile, throughput, queues at signals, road utilisation, reroutes, emergency response times, and vehicles removed by gridlock relief.
 
-The time series is sampled every 5 simulated seconds and can be exported from the settings menu or `GET /api/metrics/series.csv`. Every figure in the UI is simulated output, not real-world traffic data.
+The time series is sampled every 5 simulated seconds and can be exported from the settings menu (or `GET /api/metrics/series.csv` on the server). Every figure in the UI is simulated output, not real-world traffic data.
 
 ## Measured performance
 
@@ -136,11 +149,13 @@ Measured on an Apple M4 Pro (Temurin 21.0.13), single simulation thread, 600 sim
 
 | Vehicles (grid) | Mean step | p95 step | Real-time factor | Routing call | Nodes explored |
 |---|---|---|---|---|---|
-| 300 | 44 µs | 57 µs | 1,498× | 3.2 µs | 17.5 |
-| 600 | 69 µs | 82 µs | 1,131× | 2.8 µs | 20.5 |
-| 900 | 91 µs | 107 µs | 837× | 3.1 µs | 22.4 |
+| 300 | 45 µs | 54 µs | 1,410× | 3.2 µs | 16.9 |
+| 600 | 79 µs | 102 µs | 1,013× | 3.1 µs | 20.5 |
+| 900 | 122 µs | 192 µs | 729× | 3.4 µs | 22.0 |
 
-The spacing safety net (which pushes back any vehicle that would overlap its leader) recorded 0 interventions in all three runs. Occasional single-step maxima of 4 to 7 ms are JIT warm-up and GC.
+The spacing safety net (which pushes back any vehicle that would overlap its leader) recorded 0 interventions in all three runs. Occasional single-step maxima of 5 to 6 ms are JIT warm-up and GC.
+
+The compiled JavaScript engine averages about 240 µs per step at 300 vehicles and 545 µs at 900 in Node. In Chrome, in a background-throttled pane (the only browser reading taken so far), it averaged 1.7 ms at about 300 vehicles. Real time needs 100 ms per step, so even that leaves ample headroom. Sustained rates on a foreground page have not been measured.
 
 Rendering: one full scene pass including the shadow map, measured by calling `renderer.render` synchronously 20 times in Chrome at 2880×1800, took 1.1 ms with 50 draw calls and 122k triangles (default grid city, about 300 vehicles; post-processing not included). I have not measured sustained in-browser frame rate on a visible window; the in-app performance overlay (`P`) reports measured fps, draw calls, triangles, server step cost and snapshot size so you can check it on your hardware. If frame rate stays between 8 and 32 fps for 4 s, the client switches itself to performance mode.
 
@@ -150,14 +165,18 @@ Same seed, demand and script; 600 simulated seconds each (`HeadlessRunner compar
 
 | Scenario | Strategy | Trips | Avg trip | Avg stopped | Mean congestion | Peak queue | Removed by gridlock relief |
 |---|---|---|---|---|---|---|---|
-| Smart Signals (520 veh) | Fixed | 811 | 239.9 s | 111.7 s | 76.9 | 315 | 0 |
-| | Adaptive | 948 | 227.7 s | 93.7 s | 72.8 | 281 | 0 |
-| Rush Hour (560→680 veh) | Fixed | 797 | 266.2 s | 134.8 s | 80.0 | 432 | 4 |
-| | Adaptive | 927 | 255.4 s | 113.8 s | 76.5 | 387 | 0 |
-| Gridlock (760 veh) | Fixed | 604 | 291.4 s | 165.6 s | 84.3 | 523 | 15 |
-| | Adaptive | 673 | 291.3 s | 152.4 s | 81.1 | 443 | 7 |
+| Smart Signals (520 veh) | Fixed | 759 | 243.3 s | 113.0 s | 77.1 | 308 | 1 |
+| | Adaptive | 909 | 229.3 s | 93.1 s | 73.4 | 286 | 0 |
+| Rush Hour (560→680 veh) | Fixed | 789 | 250.5 s | 125.9 s | 80.7 | 452 | 7 |
+| | Adaptive | 940 | 235.5 s | 102.8 s | 76.9 | 393 | 2 |
+| Emergency (480 veh) | Fixed | 831 | 236.3 s | 103.3 s | 73.3 | 269 | 0 |
+| | Adaptive | 928 | 222.1 s | 80.6 s | 69.8 | 237 | 0 |
+| Gridlock (760 veh) | Fixed | 596 | 283.2 s | 162.7 s | 85.0 | 527 | 23 |
+| | Adaptive | 619 | 293.8 s | 162.8 s | 82.5 | 492 | 13 |
 
-Adaptive control completes 11–17% more trips and reduces time stopped by 8–16%. Average trip time improves 4–5% in the first two scenarios but not in Gridlock, where the network is saturated and the benefit shows up as throughput and fewer deadlocked vehicles instead. In one Emergency-scenario comparison, adaptive control had a slower average emergency response (150 s vs 134 s): the preemption logic is identical in both modes, but traffic conditions around the units differ. These are results from this model only.
+In the first three scenarios adaptive control completes 12–20% more trips, cuts time stopped by 18–22%, and shortens the average trip by about 6%. Gridlock is the exception. There the network is saturated: adaptive completes 4% more trips and removes fewer deadlocked vehicles, but time stopped does not change and the average completed trip is 3.8% longer.
+
+In the Emergency scenario the average emergency response was 95 s under adaptive control and 193 s under fixed time. That average covers only the scripted units in one run, so treat it as an example, not a general result; an earlier version of the model, with different random draws, had adaptive slower. These are results from this model only.
 
 ## Running it
 
@@ -181,6 +200,14 @@ docker compose up --build
 
 This builds the backend jar and the static client and serves the client through nginx on http://localhost:5173, proxying API and WebSocket traffic to the backend. The Dockerfiles have not yet been built in the development environment used for this project (Docker was not installed there), so treat this path as untested.
 
+### Static build (the live demo)
+
+```bash
+scripts/build-pages.sh
+```
+
+This compiles the engine with TeaVM and builds the client into `frontend/dist-pages`. `scripts/deploy-pages.sh` builds it and publishes it to the `gh-pages` branch, which GitHub Pages serves at https://yoonmax.github.io/synapse-city/.
+
 ### Headless runs
 
 The simulation needs neither Spring nor a browser:
@@ -199,7 +226,7 @@ java -cp target/classes com.synapsecity.simulation.scenarios.HeadlessRunner comp
 cd backend && mvn test
 ```
 
-78 tests, all passing at the time of writing:
+89 tests, all passing at the time of writing:
 
 - **Graph**: directed segment construction, inset geometry, right-hand lane placement, frozen topology, strongly connected components on disconnected and one-way networks, closures.
 - **Routing**: hand-computed shortest paths, closures and forbidden first edges, unreachable destinations, start equals goal, and A* vs Dijkstra cost equality plus node-count reduction on 600 random pairs across all layouts.
@@ -211,7 +238,10 @@ cd backend && mvn test
 - **Emergency**: dispatch, preemption without breaking signal safety, arrival and response time, and congestion-weighted routing costs.
 - **Metrics**: aggregation, percentiles, travel time index, sampling interval, condition bands.
 - **Scenarios**: every preset replays to the same state hash with every scripted step executed once; comparisons are deterministic and the two strategies really differ.
-- **Protocol**: every command shape, 19 malformed or out-of-range payloads, oversized payloads, and a real WebSocket session against the booted server (handshake, city, binary frame layout, error replies, pause).
+- **Protocol**: every command shape, 26 malformed or out-of-range payloads, oversized payloads, and a real WebSocket session against the booted server (handshake, city, binary frame layout, error replies, pause).
+- **Browser portability**: the seeded generator's uniform draws match the JDK's SplitMix64 exactly, and the browser build's hand-written JSON matches Jackson's output for every message type on real simulation data.
+
+Two scripts check the compiled browser build. `scripts/check-browser-parity.sh` compares full state hashes between the JVM and JavaScript. `node scripts/check-worker.cjs frontend/dist-pages/synapse-sim.js` drives the compiled worker with every command and checks each reply.
 
 The client has a strict TypeScript build (`npm run typecheck`) but no automated UI tests yet.
 
@@ -221,6 +251,7 @@ The client has a strict TypeScript build (`npm run typecheck`) but no automated 
 - **Lane-based 1D kinematics with explicit junction connectors.** Each vehicle moves along a lane or along a Bézier connector through the box. This makes car-following, queue detection and conflict checks exact and cheap, at the cost of no overtaking.
 - **Reservations instead of collision detection.** Collisions are prevented by construction (exit-lane space and conflicting-movement checks) rather than detected afterwards. The overlap clamp exists as a last resort and is reported as a metric.
 - **Binary frames for positions, JSON for everything else.** Positions dominate bandwidth; everything else is small, infrequent and easier to evolve as JSON.
+- **Compile the engine to the browser instead of renting a server.** A public server would mean one simulation shared by every visitor (anyone could reset it for everyone) and a host that sleeps when idle. Running the same Java in a Web Worker avoids both, and the parity check proves it behaves identically.
 - **Telephoto "isometric" camera.** The isometric mode is an 11° lens at long range, which approximates an axonometric view while keeping fog, shadows and picking identical to the perspective mode.
 
 ## Known limitations
@@ -230,5 +261,6 @@ The client has a strict TypeScript build (`npm run typecheck`) but no automated 
 - Pedestrians are not simulated; crosswalks are visual only.
 - Vehicles stopped for more than 180 s are removed to break deadlocks (as in SUMO's teleport rule) and counted as "removed by gridlock relief".
 - The congestion index includes signal delay by design; compare it between runs rather than against real-world indices.
-- One shared simulation serves all connected clients; there are no per-user sessions.
-- Docker Compose has not been verified, and there is no deployed demo yet.
+- On the Java server, one shared simulation serves all connected clients. The live demo gives each visitor a private one, which is lost when the page closes.
+- In the live demo, the city pauses for a few seconds during a strategy comparison.
+- Docker Compose has not been verified.

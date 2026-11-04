@@ -424,7 +424,7 @@ public final class VehicleDynamics {
         } else {
             RoadSegment seg = v.segment;
             double c = v.s - half;
-            Movement m = v.movement;
+            Movement m = v.clearing != null ? v.clearing : v.movement;
             if (c < 0 && m != null && m.out() == seg) {
                 double cc = m.length() + c;
                 if (cc >= 0) {

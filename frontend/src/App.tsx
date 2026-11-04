@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { Component, useEffect, type ReactNode } from 'react'
 import { CityCanvas } from './city/renderer/CityCanvas'
 import { connect } from './network/client'
 import { useStore } from './state/store'
@@ -6,6 +6,25 @@ import { LeftPanel } from './ui/controls/LeftPanel'
 import { RightPanel } from './ui/inspector/RightPanel'
 import { BottomBar, HelpDialog, PerfPanel, Toasts, TopBar, useShortcuts } from './ui/Chrome'
 import { Intro } from './ui/Intro'
+
+/** Without WebGL the 3D view cannot start; say so rather than leaving a blank page. */
+class RenderBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children
+    return (
+      <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-[14px] text-fog">
+        The 3D city could not start because this browser or device has WebGL turned off or unavailable.
+        Try a current desktop browser.
+      </div>
+    )
+  }
+}
 
 const INSTANT = new URLSearchParams(location.search).get('intro') === 'skip'
 
@@ -26,7 +45,9 @@ export default function App() {
   const enter = (delay: number) => (INSTANT ? { transitionDuration: '0ms' } : { transitionDelay: introDone ? `${delay}ms` : '0ms' })
   return (
     <div className="relative h-full w-full select-none overflow-hidden">
-      <CityCanvas />
+      <RenderBoundary>
+        <CityCanvas />
+      </RenderBoundary>
       <Intro />
       <div className="pointer-events-none absolute inset-0 z-10 flex flex-col gap-3 p-3">
         <div className={`transition-[opacity,transform] duration-700 ease-out-quint ${introDone ? 'opacity-100' : '-translate-y-3 opacity-0'}`} style={enter(0)}>

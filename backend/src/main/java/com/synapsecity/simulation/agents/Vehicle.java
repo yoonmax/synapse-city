@@ -44,6 +44,10 @@ public final class Vehicle {
     // Junction reservation (held from commit until the rear clears the box).
     Movement movement;
     Intersection committedAt;
+    // A long vehicle on a short road can reserve the next junction while its rear is still leaving
+    // this one, so the older reservation is kept here until it clears.
+    Movement clearing;
+    Intersection clearingAt;
 
     // Plan.
     List<RoadSegment> route = List.of();
@@ -126,6 +130,13 @@ public final class Vehicle {
     }
 
     public void assignMovement(Intersection ix, Movement m) {
+        if (movement != null) {
+            if (clearingAt != null) {
+                clearingAt.release(this);
+            }
+            clearing = movement;
+            clearingAt = committedAt;
+        }
         this.committedAt = ix;
         this.movement = m;
     }
@@ -218,6 +229,10 @@ public final class Vehicle {
 
     public Intersection committedAt() {
         return committedAt;
+    }
+
+    public Movement clearing() {
+        return clearing;
     }
 
     public List<RoadSegment> route() {

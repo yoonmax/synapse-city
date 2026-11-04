@@ -16,7 +16,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.SplittableRandom;
+import com.synapsecity.simulation.core.SeededRandom;
 
 /**
  * Owns the vehicle population and every lifecycle decision: demand-driven spawning, initial
@@ -56,7 +56,7 @@ public final class FleetManager {
 
     /** Spawns towards the target population (expected fill time constant of 2.5 s) and keeps buses running. */
     public void spawnTraffic() {
-        SplittableRandom rng = ctx.rng();
+        SeededRandom rng = ctx.rng();
         int regular = 0;
         for (Vehicle v : vehicles) {
             if (!v.persistent && v.type() != VehicleType.EMERGENCY && v.state != VehicleState.DESPAWNING) {
@@ -81,7 +81,7 @@ public final class FleetManager {
     }
 
     public Vehicle spawnRegular(VehicleType type) {
-        SplittableRandom rng = ctx.rng();
+        SeededRandom rng = ctx.rng();
         RoadSegment origin = demand.sampleOrigin(rng);
         RoadSegment dest = demand.sampleDestination(rng);
         if (origin == null || dest == null || dest == origin || dest.length() < 20) {
@@ -107,7 +107,7 @@ public final class FleetManager {
     }
 
     /** Finds an insertion gap on {@code seg} and builds an unregistered vehicle there. */
-    private Vehicle placeNew(VehicleType type, RoadSegment seg, SplittableRandom rng) {
+    private Vehicle placeNew(VehicleType type, RoadSegment seg, SeededRandom rng) {
         if (seg.isClosed() || seg.length() < DemandModel.MIN_SPAWN_LENGTH) {
             return null;
         }
@@ -140,7 +140,7 @@ public final class FleetManager {
         ctx.metrics().recordSpawn();
     }
 
-    private static DriverProfile sampleDriver(VehicleType type, SplittableRandom rng) {
+    private static DriverProfile sampleDriver(VehicleType type, SeededRandom rng) {
         double speed = 1 + Math.max(-0.15, Math.min(0.15, rng.nextGaussian() * 0.06));
         double headway = rng.nextDouble(0.85, 1.2);
         double accel = rng.nextDouble(0.85, 1.15);
@@ -223,7 +223,7 @@ public final class FleetManager {
             int c = Double.compare(a.start().distance(station), b.start().distance(station));
             return c != 0 ? c : Integer.compare(a.id(), b.id());
         });
-        SplittableRandom rng = ctx.rng();
+        SeededRandom rng = ctx.rng();
         int tried = 0;
         for (RoadSegment seg : candidates) {
             if (tried >= 14) {
@@ -461,6 +461,12 @@ public final class FleetManager {
                     v.stoppedFor = 0;
                 }
             }
+            if (v.clearing != null && (v.connector != null || v.segment != v.clearing.out()
+                    || v.s - v.length() >= -0.3)) {
+                v.clearingAt.release(v);
+                v.clearing = null;
+                v.clearingAt = null;
+            }
             if (v.movement != null && v.connector == null && v.segment == v.movement.out()
                     && v.s - v.length() >= -0.3) {
                 v.committedAt.release(v);
@@ -671,6 +677,9 @@ public final class FleetManager {
         }
         if (v.committedAt != null) {
             v.committedAt.forget(v);
+        }
+        if (v.clearingAt != null) {
+            v.clearingAt.forget(v);
         }
         if (v.segment != null) {
             ctx.intersectionAt(v.segment.to()).removeClaim(v);

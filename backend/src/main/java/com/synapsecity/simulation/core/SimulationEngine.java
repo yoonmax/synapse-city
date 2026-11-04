@@ -31,7 +31,6 @@ import com.synapsecity.simulation.signals.SignalMode;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.SplittableRandom;
 
 /**
  * The authoritative traffic simulation. Single-threaded and fixed-timestep: {@link #step()}
@@ -55,7 +54,7 @@ public final class SimulationEngine implements TrafficContext {
     private final CityModel city;
     private final RoadGraph graph;
     private final SimulationClock clock = new SimulationClock(SimulationConfig.DT);
-    private final SplittableRandom rng;
+    private final SeededRandom rng;
     private final TrafficLanes lanes;
     private final List<Intersection> intersections = new ArrayList<>();
     private final Intersection[] byNode;
@@ -80,7 +79,7 @@ public final class SimulationEngine implements TrafficContext {
         this.config = config;
         this.city = city;
         this.graph = city.graph();
-        this.rng = new SplittableRandom(config.seed() ^ 0x5DEECE66DL);
+        this.rng = new SeededRandom(config.seed() ^ 0x5DEECE66DL);
         this.lanes = new TrafficLanes(graph);
         this.byNode = new Intersection[graph.nodeCount()];
         boolean[] signalized = new boolean[graph.nodeCount()];
@@ -280,7 +279,7 @@ public final class SimulationEngine implements TrafficContext {
         Incident inc = new Incident(nextIncidentId++, seg.road().id(), seg.id(), t, t + INCIDENT_DURATION, p.x(), p.y());
         incidents.add(inc);
         emit(EventType.INCIDENT_CREATED, Severity.WARNING, "Incident on road " + seg.road().id(),
-                String.format("Speed cut to %.0f%% for %.0f s", INCIDENT_SPEED_FACTOR * 100, INCIDENT_DURATION),
+                "Speed cut to " + Math.round(INCIDENT_SPEED_FACTOR * 100) + "% for " + Math.round(INCIDENT_DURATION) + " s",
                 -1, seg.road().id(), -1, p.x(), p.y());
         return inc;
     }
@@ -436,7 +435,7 @@ public final class SimulationEngine implements TrafficContext {
     }
 
     @Override
-    public SplittableRandom rng() {
+    public SeededRandom rng() {
         return rng;
     }
 

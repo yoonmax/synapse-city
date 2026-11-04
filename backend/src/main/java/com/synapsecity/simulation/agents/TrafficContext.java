@@ -10,7 +10,7 @@ import com.synapsecity.simulation.routing.Router;
 import com.synapsecity.simulation.signals.Intersection;
 
 import java.util.List;
-import java.util.SplittableRandom;
+import com.synapsecity.simulation.core.SeededRandom;
 
 /** The view of the world that vehicle dynamics and fleet management need; implemented by the engine. */
 public interface TrafficContext {
@@ -34,7 +34,7 @@ public interface TrafficContext {
     MetricsCollector metrics();
 
     /** The engine's single seeded random stream; consuming it in a fixed order keeps runs reproducible. */
-    SplittableRandom rng();
+    SeededRandom rng();
 
     void emit(EventType type, Severity severity, String title, String detail,
               int vehicleId, int roadId, int nodeId, double x, double y);

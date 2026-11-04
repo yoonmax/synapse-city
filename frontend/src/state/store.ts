@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type {
-  CityMessage, ClientCommand, ComparisonResult, EventDto, IntersectionDetail, MetricsSample, StateMessage, VehicleDetail,
+  CityMessage, ClientCommand, ComparisonResult, EventDto, IntersectionDetail, MetricsSample, ScenarioDto, StateMessage, VehicleDetail,
 } from '../network/protocol'
 
 export type Connection = 'connecting' | 'open' | 'closed'
@@ -13,6 +13,7 @@ interface Store {
   connection: Connection
   city: CityMessage | null
   cityVersion: number
+  scenarios: ScenarioDto[]
   sim: StateMessage | null
   events: EventDto[]
   series: MetricsSample[]
@@ -47,6 +48,9 @@ interface Store {
 let sender: (cmd: ClientCommand) => void = () => {}
 let toastId = 1
 
+/** Below laptop width the panels would cover the city, so they start closed. */
+const roomForPanels = typeof window === 'undefined' || window.innerWidth >= 1100
+
 const prefersLow = typeof window !== 'undefined' &&
   (window.matchMedia('(max-width: 820px)').matches || (navigator.hardwareConcurrency ?? 8) <= 4)
 
@@ -54,6 +58,7 @@ export const useStore = create<Store>((set, get) => ({
   connection: 'connecting',
   city: null,
   cityVersion: 0,
+  scenarios: [],
   sim: null,
   events: [],
   series: [],
@@ -63,8 +68,8 @@ export const useStore = create<Store>((set, get) => ({
   selectedNode: null,
   selectedRoad: null,
   comparison: { status: 'idle', progress: 0, message: null, result: null },
-  leftOpen: true,
-  rightOpen: true,
+  leftOpen: roomForPanels,
+  rightOpen: roomForPanels,
   overlays: { heatmap: false, routes: true, signals: true },
   cameraMode: 'iso',
   quality: prefersLow ? 'low' : 'high',

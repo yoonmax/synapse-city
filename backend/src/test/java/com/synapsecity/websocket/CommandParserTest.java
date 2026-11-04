@@ -1,6 +1,5 @@
 package com.synapsecity.websocket;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.synapsecity.simulation.agents.VehicleType;
 import com.synapsecity.simulation.roads.CityLayout;
 import com.synapsecity.simulation.scenarios.ScenarioPreset;
@@ -16,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class CommandParserTest {
 
-    private final CommandParser parser = new CommandParser(new ObjectMapper());
+    private final CommandParser parser = new CommandParser();
 
     @Test
     void parsesEveryValidCommandShape() {
@@ -54,7 +53,14 @@ class CommandParserTest {
         "{\"type\":\"SET_SIGNAL_MODE\",\"mode\":\"chaos\"}",
         "{\"type\":\"REGENERATE\",\"seed\":1}",
         "{\"type\":\"RUN_COMPARISON\",\"durationSeconds\":5}",
-        "{\"type\":\"INSPECT_INTERSECTION\",\"nodeId\":\"seven\"}"
+        "{\"type\":\"INSPECT_INTERSECTION\",\"nodeId\":\"seven\"}",
+        "{\"type\":\"PAUSE\"} trailing",
+        "{\"type\":\"PAUSE\",}",
+        "{\"type\":\"SET_DENSITY\",\"value\":99999999999999999999}",
+        "{\"type\":\"SET_DENSITY\",\"value\":01}",
+        "{'type':'PAUSE'}",
+        "{\"type\":\"\\q\"}",
+        "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]"
     })
     void rejectsInvalidCommands(String payload) {
         assertThrows(CommandException.class, () -> parser.parse(payload));

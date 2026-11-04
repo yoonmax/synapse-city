@@ -1,12 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../../state/store'
-import type { DemandProfile, Layout, ScenarioId } from '../../network/protocol'
+import { RUNS_IN_BROWSER } from '../../network/client'
+import type { DemandProfile, Layout } from '../../network/protocol'
 import { Button, Section, Segmented, Slider, Toggle } from './primitives'
-
-interface ScenarioDto {
-  id: ScenarioId; title: string; description: string; seed: number; layout: Layout
-  targetVehicles: number; signalMode: string; demandProfile: string; scriptedSteps: number
-}
 
 export const SPEEDS = [0.25, 0.5, 1, 2, 4, 8, 16]
 
@@ -21,15 +17,12 @@ export function LeftPanel() {
   const [density, setDensity] = useState(300)
   const [seed, setSeed] = useState('')
   const [layout, setLayout] = useState<Layout>('GRID')
-  const [scenarios, setScenarios] = useState<ScenarioDto[]>([])
+  const scenarios = useStore((s) => s.scenarios)
 
   useEffect(() => { if (sim) setDensity(sim.targetVehicles) }, [sim?.targetVehicles]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (city) { setSeed(String(city.seed)); setLayout(city.layout) }
   }, [city])
-  useEffect(() => {
-    fetch('/api/scenarios').then((r) => r.json()).then(setScenarios).catch(() => setScenarios([]))
-  }, [])
 
   if (!sim) return null
   const closed = selectedRoad !== null && sim.closedRoads.includes(selectedRoad)
@@ -148,6 +141,7 @@ function ComparisonLauncher() {
       <div className="text-[12.5px] font-medium text-paper">Compare strategies</div>
       <p className="mt-1 text-[11.5px] leading-snug text-fog">
         Replays this seed and demand for 10 simulated minutes under each strategy in separate headless engines.
+        {RUNS_IN_BROWSER && ' The live city pauses for a few seconds while it runs.'}
       </p>
       {running ? (
         <div className="mt-2.5">

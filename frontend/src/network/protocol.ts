@@ -131,12 +131,18 @@ export interface ComparisonMessage {
   type: 'comparison'; status: 'running' | 'done' | 'error'; progress: number; message: string | null; result: ComparisonResult | null
 }
 
+export interface ScenarioDto {
+  id: ScenarioId; title: string; description: string; seed: number; layout: Layout
+  targetVehicles: number; signalMode: SignalMode; demandProfile: DemandProfile; scriptedSteps: number
+}
+export interface ScenariosMessage { type: 'scenarios'; scenarios: ScenarioDto[] }
+
 export interface HelloMessage { type: 'hello'; protocolVersion: number; dt: number; binaryVehicleStride: number }
 export interface ErrorMessage { type: 'error'; message: string }
 export interface AckMessage { type: 'vehicleGone' | 'ack'; command: string; message: string }
 
 export type ServerMessage =
-  | HelloMessage | CityMessage | StateMessage | VehicleDetail | IntersectionDetail | ComparisonMessage | ErrorMessage | AckMessage
+  | HelloMessage | ScenariosMessage | CityMessage | StateMessage | VehicleDetail | IntersectionDetail | ComparisonMessage | ErrorMessage | AckMessage
 
 export type ClientCommand =
   | { type: 'PAUSE' } | { type: 'RESUME' } | { type: 'STEP'; ticks?: number }

@@ -12,6 +12,7 @@ import com.synapsecity.simulation.roads.CityLayout;
  * <pre>
  *   java -cp target/classes com.synapsecity.simulation.scenarios.HeadlessRunner [layout] [vehicles] [seconds] [seed]
  *   java -cp target/classes com.synapsecity.simulation.scenarios.HeadlessRunner compare [preset] [seconds]
+ *   java -cp target/classes com.synapsecity.simulation.scenarios.HeadlessRunner hash [layout] [vehicles] [seconds] [seed]
  * </pre>
  */
 public final class HeadlessRunner {
@@ -28,11 +29,19 @@ public final class HeadlessRunner {
                     r.scenario(), r.seed(), r.layout(), r.targetVehicles(), r.durationSeconds());
             for (var s : new ComparisonRunner.RunSummary[]{r.fixed(), r.adaptive()}) {
                 System.out.printf("  %-8s trips=%5d  avgTrip=%6.1fs  avgWait=%5.1fs  p90=%6.1fs  speed=%5.2fm/s  "
-                                + "congestion=%5.1f  peakQueue=%4d  abandoned=%3d  wall=%6.0fms%n",
+                                + "congestion=%5.1f  peakQueue=%4d  abandoned=%3d  emergency=%5.1fs  wall=%6.0fms%n",
                         s.mode(), s.completedTrips(), s.avgTripTime(), s.avgTripWait(), s.p90TripTime(), s.avgSpeed(),
-                        s.meanCongestion(), s.peakQueue(), s.abandoned(), s.wallMillis());
+                        s.meanCongestion(), s.peakQueue(), s.abandoned(), s.emergencyAvgResponse(), s.wallMillis());
             }
             System.out.printf("  Adaptive vs fixed average trip time: %+.1f%%%n", r.tripTimeChangePct());
+            return;
+        }
+        if (args.length == 5 && args[0].equalsIgnoreCase("hash")) {
+            SimulationEngine e = new SimulationEngine(SimulationConfig.defaults()
+                    .withLayout(CityLayout.valueOf(args[1])).withTargetVehicles(Integer.parseInt(args[2]))
+                    .withSeed(Long.parseLong(args[4])));
+            e.runFor(Double.parseDouble(args[3]));
+            System.out.println(Long.toHexString(e.stateHash()) + " trips=" + e.metrics().completedTrips());
             return;
         }
         CityLayout layout = args.length > 0 ? CityLayout.valueOf(args[0].toUpperCase()) : CityLayout.GRID;

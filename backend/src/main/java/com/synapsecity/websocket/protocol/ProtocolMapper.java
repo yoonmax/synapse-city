@@ -233,7 +233,7 @@ public final class ProtocolMapper {
                 r2(ix.node().position().y()), ix.isSignalized(), ix.isSignalized() ? mode.name() : "UNSIGNALIZED",
                 ix.currentPhase(), ix.nextPhase(), ix.phaseCount(), ix.stage().name(), r1(ix.stageElapsed()),
                 r1(ix.stageRemaining()), ix.isPreempted(), ix.preemptVehicle(), ix.entries(), ix.phaseChanges(),
-                ix.preemptions(), ix.occupants().size(), approaches, phases);
+                ix.preemptions(), ix.reservations().size(), approaches, phases);
     }
 
     public static List<Messages.ScenarioDto> scenarios() {

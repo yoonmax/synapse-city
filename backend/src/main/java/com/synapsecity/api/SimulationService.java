@@ -1,13 +1,13 @@
 package com.synapsecity.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.synapsecity.session.ClientView;
+import com.synapsecity.session.RateMeter;
+import com.synapsecity.session.SimulationSession;
 import com.synapsecity.simulation.core.SimulationConfig;
-import com.synapsecity.simulation.core.SimulationEngine;
-import com.synapsecity.simulation.events.SimEvent;
 import com.synapsecity.simulation.metrics.MetricsSample;
 import com.synapsecity.simulation.scenarios.ComparisonRunner;
 import com.synapsecity.simulation.scenarios.ScenarioPreset;
-import com.synapsecity.simulation.signals.Intersection;
 import com.synapsecity.websocket.protocol.BinaryFrameEncoder;
 import com.synapsecity.websocket.protocol.ClientCommand;
 import com.synapsecity.websocket.protocol.CommandException;
@@ -19,7 +19,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -32,20 +31,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Owns the live simulation and its driver loop.
+ * JVM host for a {@link SimulationSession}: one shared simulation served over WebSocket.
  *
- * <p>Threading model: exactly one thread ("sim-loop") ever touches the engine. WebSocket and
- * REST threads enqueue commands or callables; the loop drains them at tick boundaries, then
- * advances the fixed-step engine by however many steps the wall clock and speed multiplier
- * require, then publishes snapshots. Because commands land between whole steps, the engine stays
- * deterministic regardless of network timing.</p>
+ * <p>Threading model: exactly one thread ("sim-loop") ever touches the session. WebSocket and
+ * REST threads enqueue commands or callables; the loop drains them at tick boundaries, advances
+ * the fixed-step engine, then publishes snapshots. Because commands land between whole steps, the
+ * engine stays deterministic regardless of network timing.</p>
  */
 @Service
-public class SimulationService {
+public class SimulationService implements SimulationSession.Host {
 
     private static final Logger log = LoggerFactory.getLogger(SimulationService.class);
     public static final long LOOP_MILLIS = 50;
-    private static final int MAX_STEPS_PER_LOOP = 40;
     private static final long STATE_INTERVAL_NANOS = 500_000_000L;
     private static final long DETAIL_INTERVAL_NANOS = 250_000_000L;
 
@@ -63,18 +60,13 @@ public class SimulationService {
     private final ConcurrentLinkedQueue<Runnable> inbox = new ConcurrentLinkedQueue<>();
     private final List<ClientSession> sessions = new CopyOnWriteArrayList<>();
     private final AtomicBoolean comparisonRunning = new AtomicBoolean();
+    private final SimulationSession session = new SimulationSession(this);
 
     // Owned by the sim-loop thread.
-    private SimulationEngine engine;
-    private ScenarioPreset scenario;
-    private boolean running = true;
-    private double speed = 1.0;
-    private double stepDebt;
     private long lastWallNanos;
     private long lastStateNanos;
     private long lastDetailNanos;
     private String cityJson;
-    private int approachCount;
     private int lastFrameBytes;
     private final RateMeter frameRate = new RateMeter();
     private final RateMeter stepRate = new RateMeter();
@@ -85,7 +77,7 @@ public class SimulationService {
 
     @PostConstruct
     void start() {
-        loop.execute(() -> install(new SimulationEngine(SimulationConfig.defaults()), null));
+        loop.execute(session::start);
         lastWallNanos = System.nanoTime();
         loop.scheduleAtFixedRate(this::safeTick, LOOP_MILLIS, LOOP_MILLIS, TimeUnit.MILLISECONDS);
     }
@@ -98,29 +90,29 @@ public class SimulationService {
 
     // ------------------------------------------------------------------ session registry
 
-    public void register(ClientSession session) {
-        sessions.add(session);
+    public void register(ClientSession client) {
+        sessions.add(client);
         inbox.add(() -> {
-            session.send(json(new Messages.Hello("hello", Messages.PROTOCOL_VERSION, SimulationConfig.DT,
+            client.send(json(new Messages.Hello("hello", Messages.PROTOCOL_VERSION, SimulationConfig.DT,
                     BinaryFrameEncoder.VEHICLE_STRIDE)));
-            session.sendRaw(cityJson);
-            session.lastEventId = Math.max(0, engine.events().lastId() - 40);
-            session.lastSampleTime = -1;
-            sendState(session, buildBaseState());
-            session.sendBinary(BinaryFrameEncoder.encode(engine, approachCount));
+            client.send(json(new Messages.ScenariosMessage("scenarios", ProtocolMapper.scenarios())));
+            client.send(cityJson);
+            session.onClientConnected(client.view);
+            sendState(client, baseState());
+            client.sendBinary(session.encodeFrame());
         });
     }
 
-    public void unregister(ClientSession session) {
-        sessions.remove(session);
+    public void unregister(ClientSession client) {
+        sessions.remove(client);
     }
 
-    public void submit(ClientSession session, ClientCommand command) {
+    public void submit(ClientSession client, ClientCommand command) {
         inbox.add(() -> {
             try {
-                apply(session, command);
+                session.apply(client.view, command);
             } catch (CommandException e) {
-                session.send(json(new Messages.ErrorMessage("error", e.getMessage())));
+                client.send(json(new Messages.ErrorMessage("error", e.getMessage())));
             }
         });
     }
@@ -143,7 +135,7 @@ public class SimulationService {
             tick();
         } catch (Throwable t) {
             log.error("Simulation loop error; pausing simulation", t);
-            running = false;
+            session.apply(new ClientView(), new ClientCommand.Pause());
         }
     }
 
@@ -153,27 +145,15 @@ public class SimulationService {
             r.run();
         }
         long now = System.nanoTime();
-        double wallDt = Math.min(0.25, (now - lastWallNanos) / 1e9);
+        int steps = session.advance((now - lastWallNanos) / 1e9);
         lastWallNanos = now;
-        int steps = 0;
-        if (running) {
-            stepDebt += wallDt * speed;
-            while (stepDebt >= SimulationConfig.DT && steps < MAX_STEPS_PER_LOOP) {
-                engine.step();
-                stepDebt -= SimulationConfig.DT;
-                steps++;
-            }
-            if (steps == MAX_STEPS_PER_LOOP) {
-                stepDebt = 0;
-            }
-        }
         stepRate.add(steps, now);
         if (steps > 0) {
             broadcastFrame(now);
         }
         if (now - lastStateNanos >= STATE_INTERVAL_NANOS) {
             lastStateNanos = now;
-            Messages.StateMessage base = buildBaseState();
+            Messages.StateMessage base = baseState();
             for (ClientSession s : sessions) {
                 sendState(s, base);
             }
@@ -190,7 +170,7 @@ public class SimulationService {
         if (sessions.isEmpty()) {
             return;
         }
-        byte[] frame = BinaryFrameEncoder.encode(engine, approachCount);
+        byte[] frame = session.encodeFrame();
         lastFrameBytes = frame.length;
         frameRate.add(1, now);
         for (ClientSession s : sessions) {
@@ -198,94 +178,36 @@ public class SimulationService {
         }
     }
 
-    private void install(SimulationEngine next, ScenarioPreset preset) {
-        engine = next;
-        scenario = preset;
-        stepDebt = 0;
-        approachCount = 0;
-        for (Intersection ix : engine.intersections()) {
-            approachCount += ix.approaches().size();
-        }
-        cityJson = json(ProtocolMapper.city(engine));
+    // ------------------------------------------------------------------ session callbacks
+
+    @Override
+    public void onCityChanged() {
+        cityJson = json(session.city());
         for (ClientSession s : sessions) {
-            s.selectedVehicle = null;
-            s.inspectedNode = null;
-            s.lastEventId = 0;
-            s.lastSampleTime = -1;
-            s.sendRaw(cityJson);
+            s.view.reset();
+            s.send(cityJson);
         }
     }
 
-    // ------------------------------------------------------------------ commands
+    @Override
+    public void onFrameDirty() {
+        broadcastFrame(System.nanoTime());
+    }
 
-    private void apply(ClientSession session, ClientCommand command) {
-        switch (command) {
-            case ClientCommand.Pause p -> running = false;
-            case ClientCommand.Resume r -> {
-                running = true;
-                lastWallNanos = System.nanoTime();
+    @Override
+    public void onDetailsRequested(ClientView view) {
+        for (ClientSession s : sessions) {
+            if (s.view == view) {
+                sendDetails(s);
             }
-            case ClientCommand.Step s -> {
-                for (int i = 0; i < s.ticks(); i++) {
-                    engine.step();
-                }
-                broadcastFrame(System.nanoTime());
-            }
-            case ClientCommand.SetSpeed s -> speed = s.value();
-            case ClientCommand.AddVehicles a -> engine.addVehicles(a.count(), a.vehicleType());
-            case ClientCommand.SetDensity d -> engine.setTargetVehicles(d.value());
-            case ClientCommand.SetDemand d -> engine.setDemandProfile(d.profile());
-            case ClientCommand.CloseRoad c -> engine.closeRoad(checkRoad(c.roadId()));
-            case ClientCommand.OpenRoad o -> engine.openRoad(checkRoad(o.roadId()));
-            case ClientCommand.CreateIncident i -> {
-                if (engine.createIncident(i.roadId() == null ? null : checkRoad(i.roadId())) == null) {
-                    throw new CommandException("Road is closed or already has an incident");
-                }
-            }
-            case ClientCommand.DispatchEmergency d -> engine.dispatchEmergency(d.roadId() == null ? null : checkRoad(d.roadId()));
-            case ClientCommand.SetSignalMode m -> engine.setSignalMode(m.mode());
-            case ClientCommand.SetRouting r -> engine.setRoutingAlgorithm(r.algorithm());
-            case ClientCommand.SelectVehicle v -> {
-                if (v.vehicleId() != null && engine.vehicle(v.vehicleId()) == null) {
-                    throw new CommandException("Vehicle " + v.vehicleId() + " is no longer in the simulation");
-                }
-                session.selectedVehicle = v.vehicleId();
-                sendDetails(session);
-            }
-            case ClientCommand.InspectIntersection n -> {
-                if (n.nodeId() != null && (n.nodeId() < 0 || n.nodeId() >= engine.graph().nodeCount())) {
-                    throw new CommandException("Unknown junction " + n.nodeId());
-                }
-                session.inspectedNode = n.nodeId();
-                sendDetails(session);
-            }
-            case ClientCommand.Reset r -> {
-                SimulationConfig c = engine.config();
-                install(scenario != null ? scenario.createEngine() : new SimulationEngine(c), scenario);
-            }
-            case ClientCommand.Regenerate g -> install(new SimulationEngine(engine.config().withSeed(g.seed())
-                    .withLayout(g.layout()).withTargetVehicles(engine.targetVehicles())
-                    .withSignalMode(engine.signalMode()).withRoutingAlgorithm(engine.router().algorithm())
-                    .withDemandProfile(engine.demandProfile())), null);
-            case ClientCommand.LoadScenario l -> install(l.scenario().createEngine(), l.scenario());
-            case ClientCommand.RunComparison c -> startComparison(c.durationSeconds());
         }
     }
 
-    private int checkRoad(int roadId) {
-        if (roadId < 0 || roadId >= engine.graph().roads().size()) {
-            throw new CommandException("Unknown road " + roadId);
-        }
-        return roadId;
-    }
-
-    private void startComparison(double duration) {
+    @Override
+    public void onComparisonRequested(SimulationConfig base, ScenarioPreset preset, double duration) {
         if (!comparisonRunning.compareAndSet(false, true)) {
             throw new CommandException("A comparison is already running");
         }
-        SimulationConfig base = engine.config().withTargetVehicles(engine.targetVehicles())
-                .withDemandProfile(engine.demandProfile()).withRoutingAlgorithm(engine.router().algorithm());
-        ScenarioPreset preset = scenario;
         broadcastJson(new Messages.ComparisonMessage("comparison", "running", 0,
                 "Running fixed-time and adaptive control on seed " + base.seed(), null));
         experiments.execute(() -> {
@@ -314,57 +236,27 @@ public class SimulationService {
 
     // ------------------------------------------------------------------ outbound messages
 
-    private Messages.StateMessage buildBaseState() {
+    private Messages.StateMessage baseState() {
         long now = System.nanoTime();
-        Messages.ServerStats server = new Messages.ServerStats(sessions.size(), lastFrameBytes,
-                frameRate.perSecond(now), stepRate.perSecond(now), stepRate.perSecond(now) * SimulationConfig.DT);
-        return new Messages.StateMessage("state", engine.tick(), engine.time(), running, speed,
-                engine.signalMode().name(), engine.router().algorithm().name(), engine.demandProfile().name(),
-                engine.targetVehicles(), scenario == null ? null : scenario.name(), engine.config().seed(),
-                engine.config().layout().name(), engine.liveMetrics(), engine.performance(), server,
-                ProtocolMapper.incidents(engine), ProtocolMapper.closedRoads(engine), List.of(), List.of(),
-                comparisonRunning.get());
+        double steps = stepRate.perSecond(now);
+        return session.baseState(new Messages.ServerStats(sessions.size(), lastFrameBytes, frameRate.perSecond(now),
+                steps, steps * SimulationConfig.DT), comparisonRunning.get());
     }
 
     private void sendState(ClientSession s, Messages.StateMessage base) {
-        List<Messages.EventDto> events = new ArrayList<>();
-        for (SimEvent e : engine.events().since(s.lastEventId)) {
-            events.add(ProtocolMapper.event(e));
-            s.lastEventId = e.id();
-        }
-        List<MetricsSample> series = new ArrayList<>();
-        for (MetricsSample m : engine.metrics().series()) {
-            if (m.time() > s.lastSampleTime) {
-                series.add(m);
-                s.lastSampleTime = m.time();
-            }
-        }
-        s.send(json(new Messages.StateMessage(base.type(), base.tick(), base.time(), base.running(), base.speed(),
-                base.signalMode(), base.routing(), base.demandProfile(), base.targetVehicles(), base.scenario(),
-                base.seed(), base.layout(), base.metrics(), base.perf(), base.server(), base.incidents(),
-                base.closedRoads(), events, series, base.comparisonRunning())));
+        s.send(json(session.stateFor(s.view, base)));
     }
 
     private void sendDetails(ClientSession s) {
-        if (s.selectedVehicle != null) {
-            var v = engine.vehicle(s.selectedVehicle);
-            if (v == null) {
-                s.send(json(new Messages.AckMessage("vehicleGone", "SELECT_VEHICLE",
-                        "Vehicle " + s.selectedVehicle + " left the network")));
-                s.selectedVehicle = null;
-            } else {
-                s.send(json(ProtocolMapper.vehicle(engine, v)));
-            }
-        }
-        if (s.inspectedNode != null) {
-            s.send(json(ProtocolMapper.intersection(engine, engine.intersection(s.inspectedNode))));
+        for (Object message : session.detailsFor(s.view)) {
+            s.send(json(message));
         }
     }
 
     private void broadcastJson(Object message) {
         String payload = json(message);
         for (ClientSession s : sessions) {
-            s.sendRaw(payload);
+            s.send(payload);
         }
     }
 
@@ -383,34 +275,10 @@ public class SimulationService {
     }
 
     public Messages.StateMessage stateSnapshot() {
-        return onSimThread(this::buildBaseState);
+        return onSimThread(this::baseState);
     }
 
     public List<MetricsSample> series() {
-        return onSimThread(() -> engine.metrics().series());
-    }
-
-    /** Events-per-second style counter over a sliding two-second window. */
-    private static final class RateMeter {
-        private final long[] times = new long[256];
-        private final int[] counts = new int[256];
-        private int cursor;
-
-        void add(int n, long now) {
-            times[cursor] = now;
-            counts[cursor] = n;
-            cursor = (cursor + 1) % times.length;
-        }
-
-        double perSecond(long now) {
-            long window = 2_000_000_000L;
-            int total = 0;
-            for (int i = 0; i < times.length; i++) {
-                if (times[i] != 0 && now - times[i] <= window) {
-                    total += counts[i];
-                }
-            }
-            return Math.round(total / 2.0 * 10) / 10.0;
-        }
+        return onSimThread(() -> session.engine().metrics().series());
     }
 }
